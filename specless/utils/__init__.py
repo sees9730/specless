@@ -4,4 +4,5 @@ from .collect_demos import (
     collect_demonstrations,  # NOQA
     simulate,  # NOQA
 )
+from .conditional_tsp_mapper import ConditionalTSPMapper  # NOQA
 from .robust_analysis import RobustAnalysis  # NOQA
