@@ -228,7 +228,7 @@ class MinigridTransitionSystem(TransitionSystem):
         kwargs.pop("env", None)
         super().__init__(**kwargs)
 
-        self.actions = self.env.actions
+        self.actions = self.env.get_wrapper_attr('actions')
         """actions available in the gym env. Can be fed into the TS or env"""
 
         self.reset()

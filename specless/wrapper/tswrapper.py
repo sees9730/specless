@@ -209,15 +209,9 @@ class TransitionSystemWrapper(gym.core.Wrapper, metaclass=ABCMeta):
 
         return dest_state, reward, terminated, truncated, info
 
-    def get_wrapped_actions(self):
-        # Get actions
-        actions = self.unwrapped.actions
-        env = self
-        while hasattr(env, "env"):
-            if hasattr(env, "actions"):
-                actions = env.actions
-                break
-            env = env.env
+    def get_wrapped_actions(self): 
+        # Use get_wrapper_attr to search through wrappers without triggering deprecation
+        actions = self.get_wrapper_attr('actions')
         return actions
 
     def extract_transition_system(self) -> dict:
