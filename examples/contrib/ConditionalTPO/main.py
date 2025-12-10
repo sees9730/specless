@@ -1,7 +1,7 @@
 from office_scenario import (
     create_office_environment,
     define_events_and_mapping,
-    # define_regions
+    define_regions
 )
 
 def main():
@@ -10,7 +10,7 @@ def main():
 
     # Define mandatory and optional events and create the regions
     mapping = define_events_and_mapping(transition_system)
-    # regions = define_regions(mapping)
+    regions = define_regions(mapping)
 
 
 

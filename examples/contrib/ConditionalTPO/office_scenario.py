@@ -2,6 +2,7 @@ import gymnasium as gym
 import specless as sl
 from specless.minigrid.officeenv import OfficeEnv
 from specless.utils.conditional_tsp_mapper import ConditionalTSPMapper
+from specless.utils.state_regions import StateRegions
 
 def create_office_environment(render_mode=None):
     """Create and wrap the Office environment.
@@ -62,3 +63,23 @@ def define_events_and_mapping(transition_system):
     mapping.print_summary()
 
     return mapping
+
+def define_regions(mapping):
+    """Define regions over DTS states.
+    
+    Args:
+        mapping: ConditionalTSPMapper to lookup states by observation
+    Returns:
+        A StateRegions object.
+    """
+
+    regions = StateRegions()
+
+    # Define regions by observation (all states with this observation)
+    regions.add_region_by_observation("puddle_area", "floor_blue", mapping)
+    regions.add_region_by_observation("carpet_area", "floor_grey", mapping)
+    regions.add_region_by_observation("charger_area", "floor_yellow", mapping)
+
+    regions.print_summary(mapping)
+
+    return regions
