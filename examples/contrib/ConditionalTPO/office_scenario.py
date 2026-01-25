@@ -1,8 +1,12 @@
 import gymnasium as gym
 import specless as sl
+from IPython.utils.io import capture_output
+
 from specless.minigrid.officeenv import OfficeEnv
 from specless.utils.conditional_tsp_mapper import ConditionalTSPMapper
 from specless.utils.state_regions import StateRegions
+from specless.specification.timed_partial_order import TimedPartialOrder
+from specless.specification.conditional_tpo import ConditionalTPO
 
 def create_office_environment(render_mode=None):
     """Create and wrap the Office environment.
@@ -27,7 +31,6 @@ def create_office_environment(render_mode=None):
     return env, transition_system
 
 def define_events_and_mapping(transition_system):
-    # """Define mandatory and optional events, create DTS-TSP mapping."""
     """
     Define mandatory and optional events, create DTS-TSP mapping.
     
@@ -83,3 +86,74 @@ def define_regions(mapping):
     regions.print_summary(mapping)
 
     return regions
+
+def create_conditional_tpos(mapping, regions):
+    """Create conditional TPOs for puddle and non-puddle paths.
+
+    Specification (assume time in minutes):
+    - Mandatory: Start (0-15 min) - always required
+    - cTPO 1 (puddle_area): IF puddle visited - Puddle - Carpet (0-3 min)
+    - cTPO 2 (non_puddle_area): IF puddle not visited - Charger (0-10 min)
+
+    This creates a conditional chain:
+    - Visit puddle - must visit carpet - must visit charger
+    - Skip puddle - can go directly to charger
+    """
+    # Get node IDs
+    start_node = mapping.obs_to_node["initial_state0"]
+    puddle_node = mapping.obs_to_node["floor_blue"]
+    carpet_node = mapping.obs_to_node["floor_grey"]
+    charger_node = mapping.obs_to_node["floor_yellow"]
+
+    # Base TPO: Only start is mandatory (with time window)
+    base_tpo = TimedPartialOrder.from_constraints(
+        global_constraints={
+            start_node: (0, 15)  # Start of the plan must occur within 15 min
+        }
+    )
+
+    print(" Base TPO (must finish all events with the timing constraints):")
+    print(f"   {start_node}(start) - time window [0, 15]")
+
+    ctpo = ConditionalTPO(base_tpo, regions)
+
+    # cTPO 1: IF Puddle area visited → Puddle → Carpet
+    print("\n cTPO 1 - 'puddle_area' (IF puddle visited):")
+    print(f"    {puddle_node}(floor_blue/Puddle) → {carpet_node}(floor_grey/Carpet) [0, 3]")
+    print(f"    {carpet_node}(floor_grey/Carpet) → {charger_node}(floor_yellow/Charger) [0, 10]")
+
+    puddle_tpo = TimedPartialOrder.from_constraints(
+        global_constraints={},
+        local_constraints={
+            (puddle_node, carpet_node): (0, 3),     # Carpet within 3 min after puddle
+            (carpet_node, charger_node): (0, 10)    # Charger within 10 min after carpet
+        }
+    )
+    ctpo.add_conditional_tpo("puddle_area", puddle_tpo)
+
+    # cTPO 2: IF Puddle NOT visited → Charger required directly
+    print("\n cTPO 2 - 'puddle_area' negated (IF puddle not visited):")
+    print(f"    {charger_node}(floor_yellow/Charger) [0, 10]")
+
+    no_puddle_tpo = TimedPartialOrder.from_constraints(
+        global_constraints={
+            charger_node: (0, 10)   # Charger within 10 min
+        },
+    )
+    ctpo.add_conditional_tpo("puddle_area", no_puddle_tpo, negate=True)
+
+    filename_base = "base_TPO"
+    filename_puddle = "conditional_TPO_puddle"
+    filename_no_puddle = "conditional_TPO_no_puddle"
+
+    # Visualization
+    with capture_output():
+        sl.draw_graph(base_tpo, f"visualization/{filename_base}")
+        sl.draw_graph(puddle_tpo, f"visualization/{filename_puddle}")
+        sl.draw_graph(no_puddle_tpo, f"visualization/{filename_no_puddle}")
+
+    print(f"\n Saved TPO visualizations to 'visualization/' directory.")
+
+    ctpo.print_summary()
+
+    return ctpo

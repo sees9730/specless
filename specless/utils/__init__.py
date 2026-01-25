@@ -6,3 +6,4 @@ from .collect_demos import (
 )
 from .conditional_tsp_mapper import ConditionalTSPMapper  # NOQA
 from .robust_analysis import RobustAnalysis  # NOQA
+from .state_regions import StateRegions  # NOQA

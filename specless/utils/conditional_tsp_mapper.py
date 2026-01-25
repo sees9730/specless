@@ -24,8 +24,8 @@ class ConditionalTSPMapper:
 
     This class works with TransitionSystem and extends the TSPBuilder concept
     to distinguish between:
-    - Mandatory events: Must be visited (required by base TPO)
-    - Optional events: Only visited if triggered (conditional TPO)
+    - Mandatory events: Must be visited
+    - Optional events: Only visited if triggered
 
     Key Concept:
         TransitionSystem State → Observation (Event) → TSP Node
@@ -35,8 +35,8 @@ class ConditionalTSPMapper:
 
     Example:
         TS States: kitchen_sink, kitchen_counter (both have obs="kitchen")
-        → Single TSP node for "kitchen" event
-        → Nodeset contains both state IDs
+        - Single TSP node for "kitchen" event
+        - Nodeset contains both state IDs
     """
 
     def __init__(
@@ -50,8 +50,8 @@ class ConditionalTSPMapper:
         Initialize mapping from TransitionSystem to TSP with optional events.
 
         Args:
-            transition_system: The DTS (built by specless from MiniGrid)
-            mandatory_events: Event observations that MUST be visited (base TPO)
+            transition_system: The TS
+            mandatory_events: Event observations that must be visited
             optional_events: Event observations that are conditionally required
             ignoring_obs_keys: Observation substrings to ignore (e.g., ["empty", "wall"])
         """
@@ -60,7 +60,7 @@ class ConditionalTSPMapper:
         self.optional_events = set(optional_events) if optional_events else set()
         self.ignoring_obs_keys = ignoring_obs_keys
 
-        # Core mappings (similar to TSPBuilder)
+        # Core mappings
         self.state_to_obs: Dict[Tuple, str] = {}  # TS state → observation
         self.obs_to_states: Dict[str, List[Tuple]] = defaultdict(list)  # Obs → TS states
 
@@ -77,9 +77,9 @@ class ConditionalTSPMapper:
         """
         Build mappings from TransitionSystem to TSP nodes.
 
-        Step 0: Add initial state (like TSPBuilder does)
-        Step 1: Map ALL TS states to their observations
-        Step 2: Create TSP nodes ONLY for mandatory + optional events
+        Step 0: Add initial state 
+        Step 1: Map all TS states to their observations
+        Step 2: Create TSP nodes only for mandatory + optional events
         Step 3: Mark other states as waypoints (no TSP node)
         """
         # Add initial state
@@ -142,7 +142,7 @@ class ConditionalTSPMapper:
         Get GTSP nodesets for the TSP problem.
 
         Each nodeset contains TS state IDs that satisfy an event.
-        This is used by GTSP to allow visiting ANY state in the set.
+        This is used by GTSP to allow visiting any state in the set.
 
         Returns:
             List of nodesets, where each nodeset is a list of TS states
@@ -183,18 +183,18 @@ class ConditionalTSPMapper:
 
     def print_summary(self):
         """Print a summary of the mapping."""
-        print("\nConditional TSP Mapping Summary:")
+        print(" Conditional TSP Mapping Summary:")
 
-        print(f"    Total TS states: {len(self.state_to_obs)}")
-        print(f"    Unique observations: {len(self.obs_to_states)}")
-        print(f"    TSP nodes created: {len(self.get_tsp_nodes())}")
+        print(f"   Total TS states: {len(self.state_to_obs)}")
+        print(f"   Unique observations: {len(self.obs_to_states)}")
+        print(f"   TSP nodes created: {len(self.get_tsp_nodes())}")
 
         print(f" Mandatory events ({len(self.mandatory_events)}):")
         for event in sorted(self.mandatory_events):
             if event in self.obs_to_node:
                 node_id = self.obs_to_node[event]
                 num_states = len(self.node_to_states[node_id])
-                print(f"    Node {node_id}: '{event}' ({num_states} TS states)")
+                print(f"   Node {node_id}: '{event}' ({num_states} TS states)")
 
         if self.optional_events:
             print(f" Optional events ({len(self.optional_events)}):")
@@ -202,11 +202,9 @@ class ConditionalTSPMapper:
                 if event in self.obs_to_node:
                     node_id = self.obs_to_node[event]
                     num_states = len(self.node_to_states[node_id])
-                    print(f"    Node {node_id}: '{event}' ({num_states} TS states)")
+                    print(f"   Node {node_id}: '{event}' ({num_states} TS states)")
 
         # Show waypoint observations (not in TSP)
         waypoint_obs = set(self.obs_to_states.keys()) - self.mandatory_events - self.optional_events
         if waypoint_obs:
             print(f" Waypoint observations (no TSP node): {sorted(waypoint_obs)}")
-
-        print(f"{'='*70}")

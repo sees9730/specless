@@ -1,4 +1,5 @@
 from .base import Specification, AutomataSpecification  # NOQA
+from .conditional_tpo import ConditionalTPO  # NOQA
 
 # from .dfa import DFA  # NOQA
 from .multispec import MultiSpecifications  # NOQA
