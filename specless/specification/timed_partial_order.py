@@ -28,6 +28,7 @@ class TimedPartialOrder(PartialOrder):
         self.reverse_constraints: Dict[int, Dict[int, Dict[str, float]]] = defaultdict(
             lambda: defaultdict()
         )
+        self.difference_constraints: List[Tuple[int, int, float]] = []
 
     @classmethod
     def from_csv(cls, path: str) -> Type["TimedPartialOrder"]:
@@ -96,6 +97,14 @@ class TimedPartialOrder(PartialOrder):
         self.local_constraints[src_node][tgt_node] = {"lb": lb, "ub": ub}
         self.reverse_constraints[tgt_node][src_node] = {"lb": lb, "ub": ub}
 
+    def add_difference_constraint(
+        self, node_a: int, node_b: int, max_diff: float
+    ) -> None:
+        """Add |t[node_a] - t[node_b]| <= max_diff (no precedence required)"""
+        if not isinstance(max_diff, (int, float)) or max_diff < 0:
+            raise Exception("max_diff must be a non-negative number")
+        self.difference_constraints.append((node_a, node_b, max_diff))
+
     def satisfy(self, demonstration: TimedTrace) -> bool:
         """Checks if the timed_trace satisfies the TPO constraints
 
@@ -132,6 +141,13 @@ class TimedPartialOrder(PartialOrder):
                             f"Edge {src}->{tgt} for dt={dt} did not satisfy {bound['lb']} <= dt <= {bound['ub']}"
                         )
                         return False
+
+        for node_a, node_b, max_diff in self.difference_constraints:
+            if node_a in event_to_time and node_b in event_to_time:
+                diff = abs(event_to_time[node_a] - event_to_time[node_b])
+                if diff > max_diff:
+                    print(f"|t[{node_a}] - t[{node_b}]| = {diff} > {max_diff}")
+                    return False
         return True
 
     def penalize(self, tour) -> float:

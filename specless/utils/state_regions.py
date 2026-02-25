@@ -102,6 +102,27 @@ class StateRegions:
         """Get all region names."""
         return sorted(self.regions.keys())
 
+    def to_tsp_regions(self, mapping: ConditionalTSPMapper) -> Dict[str, Set[int]]:
+        """
+        Convert DTS-level regions to TSP node-level regions.
+
+        A TSP node touches a region if any of its TS states belongs to that region.
+
+        Args:
+            mapping: ConditionalTSPMapper to lookup TSP nodes by TS state
+
+        Returns:
+            Dict mapping region names to sets of TSP node IDs
+        """
+        tsp_regions: Dict[str, Set[int]] = {}
+        for region_name, ts_states in self.regions.items():
+            tsp_nodes: Set[int] = set()
+            for tsp_node, node_states in mapping.node_to_states.items():
+                if any(state in ts_states for state in node_states):
+                    tsp_nodes.add(tsp_node)
+            tsp_regions[region_name] = tsp_nodes
+        return tsp_regions
+
     def print_summary(self, mapping: Optional[ConditionalTSPMapper] = None):
         """
         Print a summary of all regions.

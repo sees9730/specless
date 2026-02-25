@@ -3,6 +3,7 @@ from .solver import (
     LinKernighanTSPWithTPOSolver,  # NOQA
     MILPTSPSolver,  # NOQA
     MILPTSPWithTPOSolver,  # NOQA
+    MILPTSPWithRegionTracking,  # NOQA
     ORTSPSolver,  # NOQA
     ORTSPWithTPOSolver,  # NOQA
     TSPSolver,  # NOQA

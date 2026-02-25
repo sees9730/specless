@@ -1,12 +1,47 @@
+import networkx as nx
+import numpy as np
 import gymnasium as gym
 import specless as sl
 from IPython.utils.io import capture_output
+from minigrid.core.world_object import fill_coords, point_in_circle
+from minigrid.utils.rendering import downsample, highlight_img
+from minigrid.core.grid import Grid
+from minigrid.core.constants import TILE_PIXELS
+from gym_minigrid.minigrid import Grid as GymMinigridGrid
 
 from specless.minigrid.officeenv import OfficeEnv
 from specless.utils.conditional_tsp_mapper import ConditionalTSPMapper
 from specless.utils.state_regions import StateRegions
+from specless.utils.tpo_utils import create_precedence_edges, has_precedence_path
 from specless.specification.timed_partial_order import TimedPartialOrder
 from specless.specification.conditional_tpo import ConditionalTPO
+
+
+@classmethod
+def _patched_render_tile(cls, obj, agent_dir=None, highlight=False, tile_size=TILE_PIXELS, subdivs=3):
+    key = (agent_dir, highlight, tile_size)
+    key = obj.encode() + key if obj else key
+
+    if key in cls.tile_cache:
+        return cls.tile_cache[key]
+
+    img = np.zeros(shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8)
+    fill_coords(img, point_in_circle(0.031, 0.031, 0.031), (100, 100, 100))
+    if obj is not None:
+        obj.render(img)
+
+    if agent_dir is not None:
+        fill_coords(img, point_in_circle(cx=0.5, cy=0.5, r=0.31), (255, 0, 0))
+
+    img = downsample(img, subdivs)
+    cls.tile_cache[key] = img
+    return img
+
+# Monkey-patch Grid.render_tile to render agent as a circle instead of triangle
+# Both minigrid and gym_minigrid have separate Grid classes; patch both since OfficeEnv uses gym_minigrid
+_original_render_tile = Grid.render_tile
+Grid.render_tile = _patched_render_tile
+GymMinigridGrid.render_tile = _patched_render_tile
 
 def create_office_environment(render_mode=None):
     """Create and wrap the Office environment.
@@ -125,6 +160,7 @@ def create_conditional_tpos(mapping, regions):
     puddle_tpo = TimedPartialOrder.from_constraints(
         global_constraints={},
         local_constraints={
+            (start_node, puddle_node): (0, np.inf),
             (puddle_node, carpet_node): (0, 3),     # Carpet within 3 min after puddle
             (carpet_node, charger_node): (0, 10)    # Charger within 10 min after carpet
         }
@@ -136,9 +172,12 @@ def create_conditional_tpos(mapping, regions):
     print(f"    {charger_node}(floor_yellow/Charger) [0, 10]")
 
     no_puddle_tpo = TimedPartialOrder.from_constraints(
-        global_constraints={
+        global_constraints={ 
             charger_node: (0, 10)   # Charger within 10 min
         },
+        local_constraints={
+            (start_node, charger_node): (0, np.inf)  # Charger can be visited any time after start
+        }
     )
     ctpo.add_conditional_tpo("puddle_area", no_puddle_tpo, negate=True)
 
@@ -157,3 +196,78 @@ def create_conditional_tpos(mapping, regions):
     ctpo.print_summary()
 
     return ctpo
+
+
+def build_tpo_and_tsp(mapping, ctpo):
+    unified_tpo = ctpo.build_unified_tpo()
+    tsp_nodes = mapping.get_tsp_nodes()
+
+    precedence_edges = create_precedence_edges(tsp_nodes, unified_tpo)
+
+    initial_nodes = [
+        n for n in tsp_nodes
+        if not any(has_precedence_path(unified_tpo, o, n) for o in tsp_nodes if o != n)
+    ]
+    final_nodes = [
+        n for n in tsp_nodes
+        if not any(has_precedence_path(unified_tpo, n, o) for o in tsp_nodes if o != n)
+    ]
+
+    edges = list(precedence_edges)
+    for fn in final_nodes:
+        for in_ in initial_nodes:
+            if fn != in_ and (fn, in_) not in edges:
+                edges.append((fn, in_))
+
+    print(f" Unified TPO nodes: {tsp_nodes}")
+    print(f" Total edges: {len(edges)}")
+
+    tsp_graph = nx.DiGraph()
+    tsp_graph.add_edges_from(edges)
+    with capture_output():
+        sl.draw_graph(unified_tpo, "visualization/unified_TPO")
+        sl.draw_graph(tsp_graph, "visualization/TSP_graph")
+
+    return unified_tpo, edges, tsp_nodes
+
+
+def solve_with_costs(mapping, regions, unified_tpo, edges, tsp_nodes, ctpo, favor_puddle):
+    start_node = mapping.obs_to_node["initial_state0"]
+    puddle_node = mapping.obs_to_node["floor_blue"]
+    carpet_node = mapping.obs_to_node["floor_grey"]
+    charger_node = mapping.obs_to_node["floor_yellow"]
+
+    max_node = max(tsp_nodes) + 1
+    costs = [[1.0 if i != j else 0.0 for j in range(max_node)] for i in range(max_node)]
+
+    if favor_puddle:
+        costs[start_node][puddle_node] = 1.0
+        costs[puddle_node][carpet_node] = 1.0
+        costs[carpet_node][charger_node] = 1.0
+        costs[start_node][charger_node] = 50.0
+    else:
+        costs[start_node][charger_node] = 1.0
+        costs[start_node][puddle_node] = 50.0
+        costs[puddle_node][carpet_node] = 50.0
+        costs[carpet_node][charger_node] = 50.0
+
+    tsp = sl.TSPWithTPO(tsp_nodes, costs, unified_tpo)
+    tsp.edges = edges
+    tsp.nodesets = [[n] for n in tsp_nodes]
+
+    solver = sl.MILPTSPWithRegionTracking(mapping)
+    tours, cost, timestamps = solver.solve(
+        tsp,
+        ctpo=ctpo,
+        num_agent=1,
+        init_nodes=[start_node],
+        come_back_home=False,
+    )
+
+    print(f" Tour:  {tours[0]}")
+    print(f" Cost:  {cost:.2f}")
+    print(f" Events: {[mapping.node_to_obs[n] for n in tours[0]]}")
+
+    solver.print_visited_regions()
+
+    return solver, tours, cost, timestamps

@@ -94,6 +94,21 @@ class ConditionalTPO:
                 events.update(targets.keys())
         return events
 
+    def get_conditional_local_edges(self) -> Set:
+        """Return (src, tgt) pairs that appear only in conditional TPOs, not in base."""
+        base_edges = {
+            (src, tgt)
+            for src, targets in self.base_tpo.local_constraints.items()
+            for tgt in targets
+        }
+        cond_edges = set()
+        for tpo in self.conditional_tpos.values():
+            for src, targets in tpo.local_constraints.items():
+                for tgt in targets:
+                    if (src, tgt) not in base_edges:
+                        cond_edges.add((src, tgt))
+        return cond_edges
+
     def get_conditional_events_for_region(self, region_name: str) -> Set:
         """Get events from a specific region's conditional TPO."""
         if region_name not in self.conditional_tpos:
@@ -151,10 +166,13 @@ class ConditionalTPO:
         for node, bounds in unified_global.items():
             unified_global_nodes[node] = (bounds["lb"], bounds["ub"])
 
-        return TimedPartialOrder.from_constraints(
+        unified_tpo = TimedPartialOrder.from_constraints(
             global_constraints=unified_global_nodes,
             local_constraints=unified_local_edges
         )
+        for dc in self.base_tpo.difference_constraints:
+            unified_tpo.difference_constraints.append(dc)
+        return unified_tpo
 
     def print_summary(self):
         """Print a summary of the conditional TPO structure."""
