@@ -85,9 +85,12 @@ def _height(x, y):
 
 def _terrain_color(h):
     """Mars surface colour: warm ochre in valleys, sandy orange on ridges."""
-    r = 0.62 + 0.24 * h
-    g = 0.32 + 0.18 * h
-    b = 0.12 + 0.08 * h
+    # r = 0.62 + 0.24 * h
+    # g = 0.32 + 0.18 * h
+    # b = 0.12 + 0.08 * h
+    r = 0.85 + 0.1 * h
+    g = 0.5 + 0.1 * h
+    b = 0.1 + 0.1 * h
     return ColorRGBA(r=min(r,1.0), g=min(g,1.0), b=min(b,1.0), a=1.0)
 
 # Two mountains: (cx, cy, base_radius, peak_height)
@@ -215,7 +218,7 @@ def build_terrain(lava_positions):
 
             if inside and (gx, gy) in lava_set:
                 # Dark burnt-orange for outcrop/lava region — no separate tile
-                col = ColorRGBA(r=0.72, g=0.28, b=0.05, a=1.0)
+                col = ColorRGBA(r=0.5, g=0.5, b=0.5, a=1.0)
             else:
                 wall_blend = min(wall_h / 2.5, 1.0)
                 base_col = _terrain_color(h)
@@ -263,7 +266,7 @@ def build_terrain(lava_positions):
             (0.00,        mrad * 1.00, mpeak * 0.28, MCOL_BASE),
             (mpeak * 0.28, mrad * 0.65, mpeak * 0.28, MCOL_MID),
             (mpeak * 0.56, mrad * 0.35, mpeak * 0.26, MCOL_TOP),
-            (mpeak * 0.82, mrad * 0.14, mpeak * 0.24, MCOL_CAP),
+            # (mpeak * 0.82, mrad * 0.14, mpeak * 0.24, MCOL_CAP),
         ]
         for z, rad, h, col in layers:
             mk = _m("mountains", mid, Marker.SPHERE); mid += 1
@@ -736,7 +739,7 @@ class TourPublisher(Node):
             ps.header.frame_id = "map"
             ps.pose.position.x = cx
             ps.pose.position.y = cy
-            ps.pose.position.z = 0.14
+            ps.pose.position.z = 0.2
             ps.pose.orientation.w = 1.0
             msg.poses.append(ps)
         return msg

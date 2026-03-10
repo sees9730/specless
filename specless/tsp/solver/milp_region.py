@@ -114,9 +114,11 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
         path is a no-op.
 
         Passing transition_system here bridges that gap: we walk every pair of
-        TSP nodes, find the shortest physical path in the TS, and mark any edge
-        (i,j) whose path crosses the region.  Those edges are then merged into
-        the touching set in _add_constraints, giving identical MILP semantics.
+        TSP nodes and check whether j is reachable from i in the region-free
+        graph (all region states removed).  If not, every path between i and j
+        must pass through the region, so the edge (i,j) is marked as crossing.
+        Those edges are then merged into the touching set in _add_constraints,
+        giving identical MILP semantics.
         """
         if transition_system is None:
             return {}
@@ -153,24 +155,20 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
                 if sp_len is None:
                     continue
 
-                # Mark crossing only if removing the region increases the shortest path
+                # Mark crossing only if every path between i and j passes through
+                # the region — i.e. j is unreachable from i in the region-free graph.
                 for region_name in regions.regions:
                     g_free = region_free_graphs[region_name]
                     region_states = regions.regions[region_name]
                     # skip if start/end are themselves in the region
                     if set(states_i) & region_states or set(states_j) & region_states:
                         continue
-                    sp_free = None
-                    for si in states_i:
-                        for sj in states_j:
-                            try:
-                                d = nx.shortest_path_length(g_free, source=si, target=sj)
-                                if sp_free is None or d < sp_free:
-                                    sp_free = d
-                            except nx.NetworkXNoPath:
-                                continue
-                    # Only unavoidable if no region-free path exists or it is longer
-                    if sp_free is None or sp_free > sp_len:
+                    reachable = any(
+                        nx.has_path(g_free, si, sj)
+                        for si in states_i
+                        for sj in states_j
+                    )
+                    if not reachable:
                         crossing[region_name].add((i, j))
 
         return crossing

@@ -5,10 +5,10 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Terrain1
+        - /Environment1
         - /Path1
         - /Events1
-        - /Rover1
+        - /Robot1
       Splitter Ratio: 0.5
     Tree Height: 332
   - Class: rviz_common/Views
@@ -21,23 +21,25 @@ Visualization Manager:
   Displays:
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Terrain
+      Name: Environment
       Namespaces:
-        ground: true
-        mountains: true
-        outcrop_rocks: true
-        rocks: true
+        floor: true
+        walls: true
+        puddle: true
+        decor_desk: true
+        decor_chair: true
+        decor_plant: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mars_rover/terrain
+        Value: /office/environment
       Value: true
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
-      Color: 255; 200; 0
+      Color: 0; 180; 255
       Enabled: true
       Head Diameter: 0.20000000298023224
       Head Length: 0.10000000149011612
@@ -49,7 +51,7 @@ Visualization Manager:
         X: 0
         Y: 0
         Z: 0
-      Pose Color: 255; 200; 0
+      Pose Color: 0; 180; 255
       Pose Style: None
       Radius: 0.05000000074505806
       Shaft Diameter: 0.05000000074505806
@@ -60,7 +62,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mars_rover/path
+        Value: /office/path
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -81,48 +83,40 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mars_rover/events
+        Value: /office/events
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Effects
       Namespaces:
-        drill_bit: true
-        drill_dust: true
-        gas_cloud: true
-        smoke_e2: true
-        smoke_e3: true
+        puddle_ripple: true
+        charge_spark: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mars_rover/effects
+        Value: /office/effects
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Rover
+      Name: Robot
       Namespaces:
-        rover_blanket: true
-        rover_body: true
-        rover_head: true
-        rover_hubs: true
-        rover_lens: true
-        rover_mast: true
-        rover_panel: true
-        rover_rocker: true
-        rover_rtg: true
-        rover_wheels: true
+        robot_body: true
+        robot_head: true
+        robot_wheel_l: true
+        robot_wheel_r: true
+        robot_sensor: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mars_rover/rover
+        Value: /office/robot
       Value: true
   Enabled: true
   Global Options:
-    Background Color: 178; 140; 100
+    Background Color: 220; 220; 220
     Fixed Frame: map
     Frame Rate: 30
   Name: root
@@ -139,25 +133,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 12.0677
+      Distance: 11.3
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 8.6264
-        Y: 1.1535
-        Z: -3.7155
+        X: 6.0
+        Y: 4.453
+        Z: -0.38915
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.96
+      Pitch: 0.8
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.55
+      Yaw: 1.57
     Saved: ~
 Window Geometry:
   Displays:

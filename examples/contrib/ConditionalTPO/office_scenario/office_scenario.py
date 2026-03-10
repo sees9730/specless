@@ -4,7 +4,7 @@ import gymnasium as gym
 import specless as sl
 from IPython.utils.io import capture_output
 from minigrid.core.world_object import fill_coords, point_in_circle
-from minigrid.utils.rendering import downsample, highlight_img
+from minigrid.utils.rendering import downsample
 from minigrid.core.grid import Grid
 from minigrid.core.constants import TILE_PIXELS
 from gym_minigrid.minigrid import Grid as GymMinigridGrid
@@ -104,22 +104,23 @@ def define_events_and_mapping(transition_system):
 
 def define_regions(mapping):
     """Define regions over DTS states.
-    
+
     Args:
         mapping: ConditionalTSPMapper to lookup states by observation
     Returns:
         A StateRegions object.
     """
-
     regions = StateRegions()
+    present = set(mapping.obs_to_states.keys())
 
-    # Define regions by observation (all states with this observation)
-    regions.add_region_by_observation("puddle_area", "floor_blue", mapping)
-    regions.add_region_by_observation("carpet_area", "floor_grey", mapping)
-    regions.add_region_by_observation("charger_area", "floor_yellow", mapping)
+    if "floor_blue" in present:
+        regions.add_region_by_observations("puddle_area", ["floor_blue"], mapping)
+    if "floor_grey" in present:
+        regions.add_region_by_observations("carpet_area", ["floor_grey"], mapping)
+    if "floor_yellow" in present:
+        regions.add_region_by_observations("charger_area", ["floor_yellow"], mapping)
 
     regions.print_summary(mapping)
-
     return regions
 
 def create_conditional_tpos(mapping, regions):
@@ -200,17 +201,19 @@ def create_conditional_tpos(mapping, regions):
 
 def build_tpo_and_tsp(mapping, ctpo):
     unified_tpo = ctpo.build_unified_tpo()
-    tsp_nodes = mapping.get_tsp_nodes()
+    tsp_nodes   = mapping.get_tsp_nodes()
 
     precedence_edges = create_precedence_edges(tsp_nodes, unified_tpo)
 
     initial_nodes = [
         n for n in tsp_nodes
-        if not any(has_precedence_path(unified_tpo, o, n) for o in tsp_nodes if o != n)
+        if not any(has_precedence_path(unified_tpo, o, n)#, skip_edges=cond_edges)
+                   for o in tsp_nodes if o != n)
     ]
     final_nodes = [
         n for n in tsp_nodes
-        if not any(has_precedence_path(unified_tpo, n, o) for o in tsp_nodes if o != n)
+        if not any(has_precedence_path(unified_tpo, n, o)#, skip_edges=cond_edges)
+                   for o in tsp_nodes if o != n)
     ]
 
     edges = list(precedence_edges)
@@ -228,10 +231,10 @@ def build_tpo_and_tsp(mapping, ctpo):
         sl.draw_graph(unified_tpo, "visualization/unified_TPO")
         sl.draw_graph(tsp_graph, "visualization/TSP_graph")
 
-    return unified_tpo, edges, tsp_nodes
+    return unified_tpo, ctpo.base_tpo, edges, tsp_nodes
 
 
-def solve_with_costs(mapping, regions, unified_tpo, edges, tsp_nodes, ctpo, favor_puddle):
+def solve_with_costs(mapping, regions, unified_tpo, base_tpo, edges, tsp_nodes, ctpo, favor_puddle):
     start_node = mapping.obs_to_node["initial_state0"]
     puddle_node = mapping.obs_to_node["floor_blue"]
     carpet_node = mapping.obs_to_node["floor_grey"]
@@ -251,7 +254,7 @@ def solve_with_costs(mapping, regions, unified_tpo, edges, tsp_nodes, ctpo, favo
         costs[puddle_node][carpet_node] = 50.0
         costs[carpet_node][charger_node] = 50.0
 
-    tsp = sl.TSPWithTPO(tsp_nodes, costs, unified_tpo)
+    tsp = sl.TSPWithTPO(tsp_nodes, costs, base_tpo)
     tsp.edges = edges
     tsp.nodesets = [[n] for n in tsp_nodes]
 

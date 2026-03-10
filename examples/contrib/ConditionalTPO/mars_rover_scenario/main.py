@@ -50,10 +50,10 @@ def run_scenario(env_id, label, video_filename, rviz=False, publisher_script=Non
     mapping    = define_events_and_mapping(transition_system)
     regions    = define_regions(mapping)
     ctpo       = create_conditional_tpos(mapping, regions)
-    unified_tpo, edges, tsp_nodes = build_tpo_and_tsp(mapping, ctpo)
+    unified_tpo, base_tpo, edges, tsp_nodes = build_tpo_and_tsp(mapping, ctpo)
 
     solver, tours, cost, _ = solve(
-        mapping, transition_system, unified_tpo, edges, tsp_nodes, ctpo,
+        mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, ctpo,
     )
 
     n = mapping.obs_to_node
@@ -97,7 +97,7 @@ def main():
     parser = argparse.ArgumentParser(description="Mars Rover Mission Planner")
     parser.add_argument("--rviz", action="store_true",
                         help="After solving, launch RViz2 tour replay (blocking, Ctrl-C to stop)")
-    parser.add_argument("--rviz-scenario", choices=["1", "2"], default="1",
+    parser.add_argument("--rviz-scenario", choices=["1", "2"], default="2",
                         help="Which scenario to replay in RViz2 (default: 2)")
     args = parser.parse_args()
 
@@ -109,14 +109,15 @@ def main():
         publisher_script="rviz_publisher.py",
         json_path="visualization/tour_data_s1.json",
     )
-    # run_scenario(
-    #     env_id="MiniGrid-MarsRover-Outcrop-v0",
-    #     label="Scenario 2: Outcrop below lander — cheap detour, conditional TPO activates",
-    #     video_filename="scenario2_outcrop_mission.mp4",
-    #     rviz=args.rviz and args.rviz_scenario == "2",
-    #     publisher_script="rviz_publisher_s2.py",
-    #     json_path="visualization/tour_data_s2.json",
-    # )
+    run_scenario(
+        
+        env_id="MiniGrid-MarsRover-Outcrop-v0",
+        label="Scenario 2: Outcrop below lander — cheap detour, conditional TPO activates",
+        video_filename="scenario2_outcrop_mission.mp4",
+        rviz=args.rviz and args.rviz_scenario == "2",
+        publisher_script="rviz_publisher_s2.py",
+        json_path="visualization/tour_data_s2.json",
+    )
 
 
 if __name__ == "__main__":

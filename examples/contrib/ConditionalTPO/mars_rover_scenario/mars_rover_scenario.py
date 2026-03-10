@@ -271,18 +271,17 @@ def build_tpo_and_tsp(mapping, ctpo):
     """
     unified_tpo = ctpo.build_unified_tpo()
     tsp_nodes   = mapping.get_tsp_nodes()
-    cond_edges  = ctpo.get_conditional_local_edges()
 
-    precedence_edges = create_precedence_edges(tsp_nodes, unified_tpo, cond_edges)
+    precedence_edges = create_precedence_edges(tsp_nodes, unified_tpo)
 
     initial_nodes = [
         nd for nd in tsp_nodes
-        if not any(has_precedence_path(unified_tpo, o, nd, skip_edges=cond_edges)
+        if not any(has_precedence_path(unified_tpo, o, nd)
                    for o in tsp_nodes if o != nd)
     ]
     final_nodes = [
         nd for nd in tsp_nodes
-        if not any(has_precedence_path(unified_tpo, nd, o, skip_edges=cond_edges)
+        if not any(has_precedence_path(unified_tpo, nd, o)
                    for o in tsp_nodes if o != nd)
     ]
 
@@ -301,7 +300,7 @@ def build_tpo_and_tsp(mapping, ctpo):
         sl.draw_graph(unified_tpo, "visualization/unified_TPO")
         sl.draw_graph(tsp_graph,   "visualization/TSP_graph")
 
-    return unified_tpo, edges, tsp_nodes
+    return unified_tpo, ctpo.base_tpo, edges, tsp_nodes
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +342,7 @@ def build_cost_matrix(mapping, transition_system, tsp_nodes):
     return costs
 
 
-def solve(mapping, transition_system, unified_tpo, edges, tsp_nodes, ctpo):
+def solve(mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, ctpo):
     """Solve the TSP-with-TPO using real grid shortest-path distances as costs.
 
     Costs come from actual grid distances so the solver naturally prefers
@@ -374,7 +373,7 @@ def solve(mapping, transition_system, unified_tpo, edges, tsp_nodes, ctpo):
         e5 = n["floor_yellow"]
         print(f"  cost(e6→e7)={costs[e6][e7]:.0f}  cost(e4→e5)={costs[n['floor_blue']][e5]:.0f}  cost(e7→e5)={costs[e7][e5]:.0f}")
 
-    tsp = sl.TSPWithTPO(tsp_nodes, costs, unified_tpo)
+    tsp = sl.TSPWithTPO(tsp_nodes, costs, base_tpo)
     tsp.edges    = edges
     tsp.nodesets = [[nd] for nd in tsp_nodes]
 

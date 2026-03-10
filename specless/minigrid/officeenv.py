@@ -66,14 +66,14 @@ class OfficeEnv(MiniGridEnv):
                 self.put_obj(Floor("blue"), x, y)
 
         # Carpet region (grey) - dry floor
-        for x in range(9, 11):
-            for y in range(5, 7):
-                self.put_obj(Floor("grey"), x, y)
+        # for x in range(9, 11):
+            # for y in range(5, 7):
+        self.put_obj(Floor("grey"), 9, 5)
 
         # Charger region (yellow) - charging station
-        for x in range(9, 11):
-            for y in range(3, 5):
-                self.put_obj(Floor("yellow"), x, y)
+        # for x in range(9, 11):
+            # for y in range(3, 5):
+        self.put_obj(Floor("yellow"), 9, 3)
 
         # Place the agent at starting position
         if self.agent_start_pos is not None:
