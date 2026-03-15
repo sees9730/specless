@@ -44,6 +44,7 @@ class ConditionalTSPMapper:
         transition_system: TransitionSystem,
         mandatory_events: List[str],
         optional_events: Optional[List[str]] = None,
+        ap_events: Optional[List[str]] = None,
         ignoring_obs_keys: List[str] = []
     ):
         """
@@ -53,22 +54,29 @@ class ConditionalTSPMapper:
             transition_system: The TS
             mandatory_events: Event observations that must be visited
             optional_events: Event observations that are conditionally required
+            ap_events: Atomic proposition waypoint observations (e.g. lava tiles).
+                       These get TSP node IDs for edge cost computation and region
+                       tracking, but carry no visit-count constraint (d_i = 0).
             ignoring_obs_keys: Observation substrings to ignore (e.g., ["empty", "wall"])
         """
         self.ts = transition_system
         self.mandatory_events = set(mandatory_events)
         self.optional_events = set(optional_events) if optional_events else set()
+        self.ap_events: Set[str] = set(ap_events) if ap_events else set()
         self.ignoring_obs_keys = ignoring_obs_keys
 
         # Core mappings
         self.state_to_obs: Dict[Tuple, str] = {}  # TS state → observation
         self.obs_to_states: Dict[str, List[Tuple]] = defaultdict(list)  # Obs → TS states
 
-        # TSP node mappings (only for mandatory + optional events)
+        # TSP node mappings (mandatory + optional share obs; AP nodes are per-state)
         self.obs_to_node: Dict[str, int] = {}  # Observation → TSP node ID
         self.node_to_obs: Dict[int, str] = {}  # TSP node ID → Observation
         self.node_to_states: Dict[int, List[Tuple]] = {}  # TSP node → TS states
         self.state_to_node: Dict[Tuple, Optional[int]] = {}  # TS state → TSP node (or None)
+
+        # Set of TSP node IDs that are AP waypoints (one per DTS state)
+        self._ap_node_ids: Set[int] = set()
 
         # Build all mappings
         self._build_mappings()
@@ -104,11 +112,11 @@ class ConditionalTSPMapper:
             self.state_to_obs[state] = obs
             self.obs_to_states[obs].append(state)
 
-        # Create TSP nodes for mandatory + optional events
-        all_tsp_events = self.mandatory_events | self.optional_events
+        # Create TSP nodes for mandatory + optional events (one node per observation)
+        non_ap_events = self.mandatory_events | self.optional_events
 
         tsp_node_id = 0
-        for obs in sorted(all_tsp_events):  # Sort for consistent ordering
+        for obs in sorted(non_ap_events):  # Sort for consistent ordering
             if obs not in self.obs_to_states:
                 raise ValueError(
                     f"Event '{obs}' is required but no TS state has this observation!\n"
@@ -117,16 +125,32 @@ class ConditionalTSPMapper:
 
             states = self.obs_to_states[obs]
 
-            # Create TSP node for this event
             self.obs_to_node[obs] = tsp_node_id
             self.node_to_obs[tsp_node_id] = obs
             self.node_to_states[tsp_node_id] = states
 
-            # Map all TS states with this observation to this TSP node
             for state in states:
                 self.state_to_node[state] = tsp_node_id
 
             tsp_node_id += 1
+
+        # Create one TSP node per individual DTS state for AP events.
+        # Each lava tile (etc.) becomes its own node so the solver can
+        # route through specific tiles and region detection fires correctly.
+        for obs in sorted(self.ap_events):
+            if obs not in self.obs_to_states:
+                continue  # AP events absent in this environment are silently skipped
+
+            for idx, state in enumerate(sorted(self.obs_to_states[obs])):
+                synthetic_obs = f"{obs}_{idx}"
+
+                self.obs_to_node[synthetic_obs] = tsp_node_id
+                self.node_to_obs[tsp_node_id] = synthetic_obs
+                self.node_to_states[tsp_node_id] = [state]
+                self.state_to_node[state] = tsp_node_id
+                self._ap_node_ids.add(tsp_node_id)
+
+                tsp_node_id += 1
 
         # Mark non-TSP states as waypoints
         for state in self.state_to_obs.keys():
@@ -181,6 +205,14 @@ class ConditionalTSPMapper:
         return [node for node in self.get_tsp_nodes()
                 if self.is_node_optional(node)]
 
+    def get_ap_nodes(self) -> List[int]:
+        """Get TSP nodes for AP waypoint events (one per DTS state)."""
+        return sorted(self._ap_node_ids)
+
+    def is_node_ap_waypoint(self, tsp_node: int) -> bool:
+        """Check if a TSP node represents an AP waypoint (not mandatory/optional)."""
+        return tsp_node in self._ap_node_ids
+
     def print_summary(self):
         """Print a summary of the mapping."""
         print(" Conditional TSP Mapping Summary:")
@@ -204,7 +236,18 @@ class ConditionalTSPMapper:
                     num_states = len(self.node_to_states[node_id])
                     print(f"   Node {node_id}: '{event}' ({num_states} TS states)")
 
-        # Show waypoint observations (not in TSP)
-        waypoint_obs = set(self.obs_to_states.keys()) - self.mandatory_events - self.optional_events
+        if self.ap_events:
+            ap_nodes = self.get_ap_nodes()
+            print(f" AP waypoint events ({len(self.ap_events)} obs, {len(ap_nodes)} nodes):")
+            for event in sorted(self.ap_events):
+                ap_for_obs = [n for n in ap_nodes
+                              if self.node_to_obs[n].startswith(event + "_")]
+                if ap_for_obs:
+                    print(f"   '{event}': {len(ap_for_obs)} nodes → {ap_for_obs}")
+                else:
+                    print(f"   '{event}' (not present in this environment)")
+
+        # Show waypoint observations (no TSP node at all)
+        waypoint_obs = set(self.obs_to_states.keys()) - self.mandatory_events - self.optional_events - self.ap_events
         if waypoint_obs:
             print(f" Waypoint observations (no TSP node): {sorted(waypoint_obs)}")

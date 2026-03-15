@@ -2,7 +2,6 @@ import copy
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
-import networkx as nx
 import gurobipy as gp
 from gurobipy import GRB
 
@@ -32,8 +31,8 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
         self.z_vars: Dict[str, gp.Var] = {}
         self.region_values: Dict[str, bool] = {}
         self.tsp_regions: Dict[str, Set[int]] = {}
-        self.crossing_edges: Dict[str, Set[Tuple[int, int]]] = {}
         self.ctpo: Optional["ConditionalTPO"] = None
+        self._M: float = 1000
 
     def solve(
         self,
@@ -43,11 +42,9 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
         init_nodes: Optional[List[Node]] = None,
         come_back_home: bool = False,
         export_filename: Optional[str] = None,
-        transition_system=None,
     ) -> Tuple[List, float, List]:
         self.ctpo = ctpo
         self.tsp_regions = self._convert_to_tsp_regions(ctpo.regions)
-        self.crossing_edges = self._compute_crossing_edges(ctpo.regions, transition_system)
 
         tsp = copy.deepcopy(tsp)
 
@@ -76,12 +73,20 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
 
         tf = variables["tf"]
         m.setObjective(tf, GRB.MINIMIZE)
+        print('Optimizing model...')
         m.optimize()
+        print('Done')
 
         if export_filename:
             m.write(export_filename)
+            m.write(export_filename.replace(".lp", ".mps"))
 
         if m.status != GRB.OPTIMAL:
+            print(f"Model status: {m.status}")
+            if m.status == GRB.INFEASIBLE:
+                m.computeIIS()
+                m.write("iis.ilp")
+                print("IIS written to iis.ilp")
             print("Tour: [], Cost: n/a")
             return [], -1, []
 
@@ -91,93 +96,51 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
         timestamps = [self.get_timestamps(m, variables, tour) for tour in tours]
         cost = self.get_cost(m)
 
+        # Debug: print active edges and time propagation
+        x_vals = m.getAttr("X", variables["x"])
+        t_vals = m.getAttr("X", variables["t"])
+        print(f"  [debug] M={self._M:.0f}  tf={variables['tf'].X:.3f}")
+        for (i, j) in sorted(x_vals):
+            if x_vals[i, j] > 0.5:
+                need = t_vals[i] + tsp.costs[i][j]
+                ok = "OK" if t_vals[j] >= need - 1e-4 or j in self.init_nodes else "VIOLATED"
+                print(f"  [debug] x[{i},{j}]=1  t[{i}]={t_vals[i]:.1f}+{tsp.costs[i][j]:.0f} -> need t[{j}]>={need:.1f}, got {t_vals[j]:.1f}  {ok}")
+
         return tours, cost, timestamps
 
     # -------------------------------------------------------------------------
 
+    # def initialize_problem(self, tsp):
+    #     """Override to set tight upper bounds on time variables."""
+    #     m, variables = super().initialize_problem(tsp)
+    #     # Tight UB on t: max tour time = n_nodes * max_single_edge_cost.
+    #     # This makes M = UB sufficient and keeps the LP relaxation tight.
+    #     finite_costs = [
+    #         tsp.costs[i][j]
+    #         for (i, j) in tsp.edges
+    #         if 0 < tsp.costs[i][j] < 1e5
+    #     ]
+    #     max_edge = max(finite_costs) if finite_costs else 100
+    #     self._M = len(tsp.nodes) * max_edge
+    #     t = variables["t"]
+    #     for n in tsp.nodes:
+    #         t[n].ub = self._M
+    #     variables["tf"].ub = self._M
+    #     variables["tT"].values()  # iterate to set ub
+    #     for v in variables["tT"].values():
+    #         v.ub = self._M
+    #     m.update()
+    #     return m, variables
+
     def _convert_to_tsp_regions(self, regions: "StateRegions") -> Dict[str, Set[int]]:
         return regions.to_tsp_regions(self.mapping)
-
-    def _compute_crossing_edges(self, regions: "StateRegions", transition_system) -> Dict[str, Set[Tuple[int, int]]]:
-        """Find TSP edge pairs (i,j) whose shortest TS path crosses a region.
-
-        This implements the same region-touching logic as the standard node-set
-        approach, but handles the case where a region has no TSP node of its own.
-
-        Normally a region is defined by observation tiles that are also TSP nodes
-        (mandatory or optional events), so to_tsp_regions() finds them directly
-        and the touching edges are populated via node membership.  When the
-        observation color palette is exhausted (e.g. gym_minigrid only has 6
-        floor colors, all taken by event tiles), a background object like Lava is
-        used to mark the region instead.  Lava tiles are stored in obs_to_states
-        but carry no TSP node, so tsp_regions[region] is empty and the standard
-        path is a no-op.
-
-        Passing transition_system here bridges that gap: we walk every pair of
-        TSP nodes and check whether j is reachable from i in the region-free
-        graph (all region states removed).  If not, every path between i and j
-        must pass through the region, so the edge (i,j) is marked as crossing.
-        Those edges are then merged into the touching set in _add_constraints,
-        giving identical MILP semantics.
-        """
-        if transition_system is None:
-            return {}
-
-        crossing: Dict[str, Set[Tuple[int, int]]] = {r: set() for r in regions.regions}
-        tsp_nodes = self.mapping.get_tsp_nodes()
-
-        # Build a subgraph with region nodes removed for each region, to test
-        # whether the region is truly unavoidable on the shortest path.
-        region_free_graphs = {}
-        for region_name, region_states in regions.regions.items():
-            g = nx.DiGraph(transition_system)
-            g.remove_nodes_from(region_states)
-            region_free_graphs[region_name] = g
-
-        for i in tsp_nodes:
-            for j in tsp_nodes:
-                if i == j:
-                    continue
-                states_i = self.mapping.node_to_states[i]
-                states_j = self.mapping.node_to_states[j]
-
-                # Find shortest path length through full graph
-                sp_len = None
-                for si in states_i:
-                    for sj in states_j:
-                        try:
-                            d = nx.shortest_path_length(transition_system, source=si, target=sj)
-                            if sp_len is None or d < sp_len:
-                                sp_len = d
-                        except nx.NetworkXNoPath:
-                            continue
-
-                if sp_len is None:
-                    continue
-
-                # Mark crossing only if every path between i and j passes through
-                # the region — i.e. j is unreachable from i in the region-free graph.
-                for region_name in regions.regions:
-                    g_free = region_free_graphs[region_name]
-                    region_states = regions.regions[region_name]
-                    # skip if start/end are themselves in the region
-                    if set(states_i) & region_states or set(states_j) & region_states:
-                        continue
-                    reachable = any(
-                        nx.has_path(g_free, si, sj)
-                        for si in states_i
-                        for sj in states_j
-                    )
-                    if not reachable:
-                        crossing[region_name].add((i, j))
-
-        return crossing
 
     def _add_region_variables(self, m: gp.Model):
         self.z_vars = {}
         needed = set()
         for key in self.ctpo.conditional_tpos:
-            needed.add(key.replace("NOT_", "") if key.startswith("NOT_") else key)
+            # needed.add(key.replace("NOT_", "") if key.startswith("NOT_") else key)
+            needed.add(key)
         for region_name in needed:
             if region_name in self.tsp_regions:
                 self.z_vars[region_name] = m.addVar(vtype=GRB.BINARY, name=f"z_{region_name}")
@@ -195,6 +158,7 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
         for nodes in tsp.nodesets:
             is_mandatory = any(n in mandatory_nodes for n in nodes)
             K = sum(n in init_nodes for n in nodes) or 1
+            print(f"  [debug] nodeset {nodes}  mandatory={is_mandatory}  K={K}")
             op = m.addConstr if is_mandatory else None
             if is_mandatory:
                 m.addConstr(gp.quicksum(x.sum("*", n) for n in nodes) == K, "incoming")
@@ -203,14 +167,15 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
                 m.addConstr(gp.quicksum(x.sum("*", n) for n in nodes) <= K, "incoming_opt")
                 m.addConstr(gp.quicksum(x.sum(n, "*") for n in nodes) <= K, "outgoing_opt")
 
+        # Flow conservation: in-degree == out-degree for all nodes 
         m.addConstrs((x.sum("*", n) == x.sum(n, "*") for n in tsp.nodes), "flow")
 
         m.addConstrs(
-            (t[n] >= tsp.tpo.global_constraints[n]["lb"] for n in tsp.tpo.global_constraints),
+            (t[n] >= tsp.tpo.global_constraints[n]["lb"] for n in tsp.tpo.global_constraints.keys()),
             "nodeLB",
         )
         m.addConstrs(
-            (t[n] <= tsp.tpo.global_constraints[n]["ub"] for n in tsp.tpo.global_constraints),
+            (t[n] <= tsp.tpo.global_constraints[n]["ub"] for n in tsp.tpo.global_constraints.keys()),
             "nodeUB",
         )
 
@@ -234,42 +199,49 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
             m.addConstr(t[node_a] - t[node_b] <=  max_diff, name=f"diff_{idx}_ab")
             m.addConstr(t[node_b] - t[node_a] <=  max_diff, name=f"diff_{idx}_ba")
 
-        M = 100000
-        for (i, j) in tsp.edges:
-            if i in init_nodes:
-                m.addConstr(t[i] == 0, name=f"init_time_{i}")
-            if j not in init_nodes:
-                m.addConstr(
-                    t[j] >= t[i] + tsp.costs[i][j] - M * (1 - x[i, j]),
-                    name=f"time_prop_{i}_{j}",
-                )
+        for i in set(init_nodes):
+            m.addConstr(t[i] == 0, name=f"init_time_{i}")
 
+        # Indicator constraints: if edge (i,j) is taken, propagate time.
+        m.addConstrs(
+            (
+                (x[(i, j)] == 1) >> (t[j] - t[i] >= tsp.costs[i][j])
+                for (i, j) in tsp.edges
+                if j not in self.init_nodes
+            ),
+            "delay",
+        )
+
+        # for ii, I in enumerate(init_nodes):
+        #     m.addConstrs(
+        #         (x[i, I] == 1) >> (tT[ii, I] - t[i] >= 0)
+        #         for i in non_init_nodes
+        #         if (i, I) in tsp.edges
+        #     )
         for ii, I in enumerate(init_nodes):
-            edges_to_init = [(i, I) for i in non_init_nodes if (i, I) in tsp.edges]
-            for (i, _) in edges_to_init:
-                m.addConstr(
-                    tT[ii, I] >= t[i] + tsp.costs[i][I] * x[i, I] - M * (1 - x[i, I]),
-                    name=f"terminal_time_{ii}_{I}_{i}",
-                )
+            m.addConstrs(
+                (
+                    (x[(i, I)] == 1) >> (tT[(ii, I)] - t[i] >= tsp.costs[i][I])
+                    for i in non_init_nodes
+                ),
+                "delayTerm",
+            )
 
-        for ii, I in enumerate(init_nodes):
-            m.addConstr(tf >= tT[ii, I], name=f"final_time_{ii}_{I}")
+        # m.addGenConstrMax(tf, list(tT.values()), name="tf_max")
+        m.addGenConstrMax(tf, tT)
 
-        # Region tracking: z[r] linked to edge variables
+        # Region tracking: z[r]=1 iff any AP node in the region is visited.
+        # Use all incoming edges to region nodes: z >= x[i,j] for each, z <= sum.
         for region_name, node_set in self.tsp_regions.items():
             if region_name not in self.z_vars:
                 continue
             z = self.z_vars[region_name]
-            crossing = self.crossing_edges.get(region_name, set())
-            touching = list({
-                (i, j) for (i, j) in tsp.edges
-                if i in node_set or j in node_set or (i, j) in crossing
-            })
-            for (i, j) in touching:
+            incoming = [(i, j) for (i, j) in tsp.edges if j in node_set]
+            for (i, j) in incoming:
                 m.addConstr(z >= x[i, j], name=f"region_{region_name}_lb_{i}_{j}")
-            if touching:
+            if incoming:
                 m.addConstr(
-                    z <= gp.quicksum(x[i, j] for (i, j) in touching),
+                    z <= gp.quicksum(x[i, j] for (i, j) in incoming),
                     name=f"region_{region_name}_ub",
                 )
 
@@ -281,7 +253,6 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
 
         x = variables["x"]
         t = variables["t"]
-        M = 100000
 
         # Map each event node to the cTPO keys it appears in
         event_to_keys: Dict[int, Set[str]] = defaultdict(set)
@@ -308,6 +279,8 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
                 g["normal"] and g["negated"] for g in region_groups.values()
             )
 
+            print(f"Event {event_node} is always required: {always_required}")
+
             if always_required:
                 m.addConstr(incoming_sum == 1, name=f"mandatory_event_{event_node}")
             else:
@@ -318,32 +291,35 @@ class MILPTSPWithRegionTracking(MILPTSPWithTPOSolver):
                     if z is None:
                         continue
                     if is_neg:
-                        m.addConstr(incoming_sum <= 1 - z, name=f"opt_{event_node}_req_NOT_{rname}")
-                        m.addConstr(incoming_sum >= 1 - z, name=f"NOT_{rname}_req_{event_node}")
+                        m.addConstr((z == 0) >> (incoming_sum == 1), name=f"NOT_{rname}_req_{event_node}")
+                        m.addConstr((z == 1) >> (incoming_sum == 0), name=f"opt_{event_node}_skip_if_{rname}")
                     else:
-                        m.addConstr(incoming_sum <= z, name=f"opt_{event_node}_req_{rname}")
-                        m.addConstr(incoming_sum >= z, name=f"_{rname}_req_{event_node}")
+                        m.addConstr((z == 1) >> (incoming_sum == 1), name=f"{rname}_req_{event_node}")
+                        m.addConstr((z == 0) >> (incoming_sum == 0), name=f"opt_{event_node}_skip_if_NOT_{rname}")
 
-        # Conditional precedence constraints (Big-M)
+        # Conditional precedence constraints via indicator constraints on z.
+        # z=1 → region visited; z=0 → not visited.
+        # is_neg=True  → constraint active when z=0 (NOT visited)
+        # is_neg=False → constraint active when z=1 (visited)
         for key, cond_tpo in self.ctpo.conditional_tpos.items():
             is_neg = self.ctpo.negated_regions.get(key, False)
             rname = key.replace("NOT_", "") if is_neg else key
             z = self.z_vars.get(rname)
             if z is None:
                 continue
+            zval = 0 if is_neg else 1
             for src, targets in cond_tpo.local_constraints.items():
                 for tgt, bounds in targets.items():
                     lb, ub = bounds["lb"], bounds["ub"]
-                    if is_neg:
-                        m.addConstr(t[tgt] - t[src] >= lb - M * z,
-                                    name=f"cond_prec_NOT_{rname}_{src}_{tgt}_lb")
-                        m.addConstr(t[tgt] - t[src] <= ub + M * z,
-                                    name=f"cond_prec_NOT_{rname}_{src}_{tgt}_ub")
-                    else:
-                        m.addConstr(t[tgt] - t[src] >= lb - M * (1 - z),
-                                    name=f"cond_prec_{rname}_{src}_{tgt}_lb")
-                        m.addConstr(t[tgt] - t[src] <= ub + M * (1 - z),
-                                    name=f"cond_prec_{rname}_{src}_{tgt}_ub")
+                    m.addConstr(
+                        (z == zval) >> (t[tgt] - t[src] >= lb),
+                        name=f"cond_prec_{key}_{src}_{tgt}_lb",
+                    )
+                    # if ub < 1e9:
+                    m.addConstr(
+                        (z == zval) >> (t[tgt] - t[src] <= ub),
+                        name=f"cond_prec_{key}_{src}_{tgt}_ub",
+                    )
 
         m.update()
 

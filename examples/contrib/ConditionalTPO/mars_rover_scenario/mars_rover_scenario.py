@@ -142,10 +142,16 @@ def define_events_and_mapping(transition_system):
     print(f" Mandatory events: {mandatory_events}")
     print(f" Optional events:  {optional_events}")
 
+    # lava_red tiles mark the outcrop boundary (AP label p_o); they get a TSP
+    # node for edge cost/region tracking but no visit-count constraint (d_i=0).
+    ap_events = [o for o in ["lava_red"] if o in all_obs]
+    print(f" AP waypoint events: {ap_events}")
+
     mapping = ConditionalTSPMapper(
         transition_system,
         mandatory_events=mandatory_events,
         optional_events=optional_events,
+        ap_events=ap_events,
         ignoring_obs_keys=["empty", "wall"],
     )
 
@@ -167,8 +173,11 @@ def define_regions(mapping):
     present = set(mapping.obs_to_states.keys())
 
     if "lava_red" in present:
-        outcrop_obs = [o for o in ["lava_red", "floor_grey", "goal_green"] if o in present]
-        regions.add_region_by_observations("outcrop_region", outcrop_obs, mapping)
+        # lava_red is an AP waypoint node → to_tsp_regions() finds it directly.
+        # floor_grey/goal_green are optional event nodes that already appear in
+        # the tour graph; including them here would add their edges to the
+        # touching set but is not needed for correct E_k construction.
+        regions.add_region_by_observation("outcrop_region", "lava_red", mapping)
         regions.print_summary(mapping)
     else:
         print(" No lava tiles in this environment — outcrop_region not defined.")
@@ -201,11 +210,11 @@ def create_conditional_tpos(mapping, regions):
             (e1, e4): (0, np.inf),
             (e3, e5): (0, np.inf),
             (e4, e5): (0, np.inf),
-            (e1, e5): (0, 20)
+            (e1, e5): (0, 40)
         },
     )
     # |t[e3] - t[e4]| <= 4: both samples must reflect the same atmospheric state
-    base_tpo.add_difference_constraint(e3, e4, 5)
+    base_tpo.add_difference_constraint(e3, e4, 10)
 
     print(" Base TPO:")
     print(f"   {e1}(e1) → {e2}(e2) [0,15],  {e2}(e2) → {e3}(e3) [0,10]")
@@ -225,9 +234,9 @@ def create_conditional_tpos(mapping, regions):
             global_constraints={},
             local_constraints={
                 (e1, e6): (0, np.inf),
-                (e6, e7): (0, 3),  # navigate before sampling
+                (e6, e7): (0, 10),  # navigate before sampling
                 (e7, e5): (0, np.inf),  # must return to lander after sampling
-                (e1, e5): (0, 20)
+                (e1, e5): (0, 40)
             },
         )
         print(f"\n cTPO 1 — 'outcrop_region' (IF outcrop visited):")
@@ -239,7 +248,7 @@ def create_conditional_tpos(mapping, regions):
         no_outcrop_tpo = TimedPartialOrder.from_constraints(
             global_constraints={},
             local_constraints={
-                (e1, e5): (0, 20)
+                (e1, e5): (0, 40)
             },
         )
         print(f"\n cTPO 2 — 'outcrop_region' negated (IF outcrop NOT visited):")
@@ -267,7 +276,7 @@ def build_tpo_and_tsp(mapping, ctpo):
     """Merge all conditional TPOs and build the TSP precedence graph.
 
     Returns:
-        (unified_tpo, edges, tsp_nodes)
+        (unified_tpo, base_tpo, edges, tsp_nodes)
     """
     unified_tpo = ctpo.build_unified_tpo()
     tsp_nodes   = mapping.get_tsp_nodes()
@@ -290,6 +299,18 @@ def build_tpo_and_tsp(mapping, ctpo):
         for in_ in initial_nodes:
             if fn != in_ and (fn, in_) not in edges:
                 edges.append((fn, in_))
+
+    # AP waypoint nodes have no precedence constraints, so they don't appear in
+    # precedence_edges.  Add bidirectional edges between every AP node and every
+    # other TSP node so the solver can route through them freely.
+    ap_nodes = mapping.get_ap_nodes()
+    for ap in ap_nodes:
+        for nd in tsp_nodes:
+            if nd != ap:
+                if (ap, nd) not in edges:
+                    edges.append((ap, nd))
+                if (nd, ap) not in edges:
+                    edges.append((nd, ap))
 
     print(f" Unified TPO nodes: {tsp_nodes}")
     print(f" Total TSP edges:   {len(edges)}")
@@ -359,6 +380,34 @@ def solve(mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, c
     n = mapping.obs_to_node
     depot = n["initial_state0"]
 
+    # Human-readable labels: event obs → short name, AP synthetic obs → lava_red_#
+    _event_labels = {
+        "initial_state0": "depot",
+        "floor_green":    "e1",
+        "floor_red":      "e2",
+        "floor_purple":   "e3",
+        "floor_blue":     "e4",
+        "floor_yellow":   "e5",
+        "floor_grey":     "e6",
+        "goal_green":     "e7",
+    }
+    # Count per AP observation prefix for numbering
+    _ap_counters = {}
+    _node_label = {}
+    for nd in tsp_nodes:
+        obs = mapping.node_to_obs[nd]
+        if mapping.is_node_ap_waypoint(nd):
+            # synthetic obs is e.g. "lava_red_0" — strip the index and re-number
+            prefix = "_".join(obs.split("_")[:-1])  # e.g. "lava_red"
+            idx = _ap_counters.get(prefix, 0)
+            _ap_counters[prefix] = idx + 1
+            _node_label[nd] = f"{prefix}_{idx}"
+        else:
+            _node_label[nd] = _event_labels.get(obs, obs)
+
+    def lbl(nd):
+        return _node_label[nd]
+
     print(" Computing shortest-path cost matrix...")
     costs = build_cost_matrix(mapping, transition_system, tsp_nodes)
 
@@ -366,7 +415,7 @@ def solve(mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, c
     for i in tsp_nodes:
         for j in tsp_nodes:
             if i != j and costs[i][j] > 0:
-                print(f"    {mapping.node_to_obs[i]} → {mapping.node_to_obs[j]}: {costs[i][j]:.0f}")
+                print(f"    {lbl(i)} → {lbl(j)}: {costs[i][j]:.0f}")
 
     if "floor_grey" in n and "goal_green" in n:
         e6, e7 = n["floor_grey"], n["goal_green"]
@@ -375,7 +424,13 @@ def solve(mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, c
 
     tsp = sl.TSPWithTPO(tsp_nodes, costs, base_tpo)
     tsp.edges    = edges
-    tsp.nodesets = [[nd] for nd in tsp_nodes]
+
+    # print(f"  TSP edges ({len(edges)}):")
+    # for (i, j) in edges:
+    #     print(f"    {lbl(i)} → {lbl(j)}: {costs[i][j]:.0f}")
+    # AP waypoint nodes must NOT be in nodesets (no visit-count == K constraint).
+    non_ap_nodes = mapping.get_mandatory_nodes() + mapping.get_optional_nodes()
+    tsp.nodesets = [[nd] for nd in non_ap_nodes]
 
     solver = sl.MILPTSPWithRegionTracking(mapping)
     tours, cost, timestamps = solver.solve(
@@ -384,12 +439,13 @@ def solve(mapping, transition_system, unified_tpo, base_tpo, edges, tsp_nodes, c
         num_agent=1,
         init_nodes=[depot],
         come_back_home=False,
-        transition_system=transition_system,
+        export_filename='debug.lp'
     )
 
     print(f" Tour:   {tours[0]}")
     print(f" Cost:   {cost:.2f}")
     print(f" Events: {[mapping.node_to_obs[nd] for nd in tours[0]]}")
+    print(f" Timestamps: {[f'{v:.1f}' for v in timestamps[0]]}")
 
     solver.print_visited_regions()
     return solver, tours, cost, timestamps

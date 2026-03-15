@@ -201,7 +201,7 @@ class MILPTSPWithTPOSolver(TSPWithTPOSolver):
         """Initialize the problem"""
         # Declare and initialize model
         env = gp.Env()
-        env.setParam("TimeLimit", 30 * 60)
+        env.setParam("TimeLimit", 100 * 60)
         env.setParam("OutputFlag", 0)
 
         m = gp.Model(env=env)
